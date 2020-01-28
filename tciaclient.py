@@ -2,7 +2,7 @@ import os
 import urllib.request, urllib.error, urllib.parse
 import urllib.request, urllib.parse, urllib.error
 import shutil
-import dicom
+import pydicom as dicom
 import json
 import zipfile
 import errno
@@ -11,6 +11,25 @@ import errno
 #
 # Refer https://wiki.cancerimagingarchive.net/display/Public/REST+API+Usage+Guide for complete list of API
 #
+
+
+def read_tcia_file(path):
+    fd = open(path, 'r')
+    lines = [ l.strip() for l in fd.readlines() ]
+    fd.close()
+
+    writer = False
+    studyInstanceUIDString = list()
+    for line in lines:
+        sline = line.split('=')
+        if len(sline) > 1:
+            writer = 'ListOfSeriesToDownload' in sline[0]
+        if writer:
+            studyInstanceUIDString.append(sline[-1])
+
+    return [ s for s in studyInstanceUIDString if s ]
+
+
 class TCIAClient:
     GET_COLLECTION_VALUES = "getCollectionValues" 
     GET_MODALITY_VALUES = "getModalityValues" 
@@ -29,16 +48,18 @@ class TCIAClient:
     CONTENTS_BY_NAME = "ContentsByName"
     
 
-    def __init__(self, apiKey , baseUrl, resource):
+    def __init__(self, 
+                 apiKey=None, 
+                 baseUrl="https://services.cancerimagingarchive.net/services/v3", 
+                 resource="TCIA"):
         self.apiKey = apiKey
-        self.baseUrl = baseUrl + "/" + resource
+        self.baseUrl = '/'.join([baseUrl, resource])
 
     def execute(self, url, queryParameters={}):
         queryParameters = dict((k, v) for k, v in queryParameters.items() if v)
-        headers = {"api_key" : self.apiKey }
+        headers = {"api_key" : self.apiKey } if self.apiKey is not None else {}
         queryString = "?%s" % urllib.parse.urlencode(queryParameters)
         requestUrl = url + queryString
-        print(requestUrl)
         request = urllib.request.Request(url=requestUrl , headers=headers)
         resp = urllib.request.urlopen(request)
         return resp
@@ -49,7 +70,6 @@ class TCIAClient:
             headers = {"api_key" : self.apiKey }
             queryString = "?%s" % urllib.parse.urlencode(queryParameters)
             requestUrl = url + queryString
-            print(requestUrl)
             request = urllib.request.Request(url=requestUrl , headers=headers)
             # Download the file from `url` and save it locally under `file_name`:
             with urllib.request.urlopen(request) as response, open(fileName, 'wb') as out_file:
@@ -147,12 +167,12 @@ class TCIAClient:
 
 
     def get_image(self , seriesInstanceUid , downloadPath, zipFileName):
-        serviceUrl = self.baseUrl + "/query/" + self.GET_IMAGE
+        serviceUrl = '/'.join([self.baseUrl, 'query', self.GET_IMAGE])
         queryParameters = { "SeriesInstanceUID" : seriesInstanceUid }
         os.umask(0o002)
         try:
             file = os.path.join(downloadPath, zipFileName)
-            resp = self.execute( serviceUrl , queryParameters)
+            resp = self.execute(serviceUrl, queryParameters)
             downloaded = 0
             CHUNK = 256 * 10240
             with open(file, 'wb') as fp:
